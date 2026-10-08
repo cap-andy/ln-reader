@@ -1,0 +1,5 @@
+node_modules/
+data/cache/*.json
+data/bookmarks.json
+data/progress.json
+.DS_Store
