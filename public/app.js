@@ -1,5 +1,6 @@
 const el = (id) => document.getElementById(id);
 
+const topbar = el("topbar");
 const urlInput = el("urlInput");
 const fetchBtn = el("fetchBtn");
 const pasteModeBtn = el("pasteModeBtn");
@@ -127,6 +128,50 @@ bookmarksToggle.addEventListener("click", () => {
 applySettings();
 
 // ---------------------------------------------------------------------------
+// Auto-hide top bar once the article has scrolled up beneath it
+// ---------------------------------------------------------------------------
+
+let lastScrollY = window.scrollY;
+let topbarHeight = topbar.offsetHeight;
+let scrollTicking = false;
+
+function updateTopbarHeight() {
+  topbarHeight = topbar.offsetHeight;
+}
+window.addEventListener("resize", updateTopbarHeight);
+
+function handleTopbarScroll() {
+  const currentY = window.scrollY;
+  const delta = currentY - lastScrollY;
+  const pastThreshold = currentY > topbarHeight;
+  const hasArticle = !reader.classList.contains("hidden");
+
+  if (hasArticle && pastThreshold) {
+    if (delta > 2) {
+      topbar.classList.add("topbar-hidden");
+    } else if (delta < -2) {
+      topbar.classList.remove("topbar-hidden");
+    }
+  } else {
+    topbar.classList.remove("topbar-hidden");
+  }
+
+  lastScrollY = currentY;
+  scrollTicking = false;
+}
+
+window.addEventListener(
+  "scroll",
+  () => {
+    if (!scrollTicking) {
+      requestAnimationFrame(handleTopbarScroll);
+      scrollTicking = true;
+    }
+  },
+  { passive: true }
+);
+
+// ---------------------------------------------------------------------------
 // Status / error display
 // ---------------------------------------------------------------------------
 
@@ -211,6 +256,8 @@ function renderChapter(data) {
   urlInput.value = data.chapterUrl || "";
 
   window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+  lastScrollY = 0;
+  topbar.classList.remove("topbar-hidden");
   maybeOfferResume();
   observeAutoNext();
 }

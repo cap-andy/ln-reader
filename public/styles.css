@@ -39,22 +39,28 @@ body {
 .topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 14px 20px;
+  gap: 20px;
+  padding: 12px 20px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
   z-index: 10;
+  transition: transform 0.35s ease;
+}
+
+.topbar.topbar-hidden {
+  transform: translateY(-100%);
 }
 
 .brand {
   font-size: 18px;
   margin: 0;
   letter-spacing: 0.02em;
+  flex-shrink: 0;
 }
 
-.topbar-actions { display: flex; gap: 8px; }
+.topbar-actions { display: flex; gap: 8px; flex-shrink: 0; }
 
 button, .icon-btn {
   font-family: var(--font-ui);
@@ -65,6 +71,7 @@ button, .icon-btn {
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
+  white-space: nowrap;
 }
 
 button:hover:not(:disabled) { border-color: var(--accent); }
@@ -79,24 +86,26 @@ button#fetchBtn, button.primary {
 .fetch-bar {
   display: flex;
   gap: 8px;
-  padding: 14px 20px;
-  max-width: 760px;
+  flex: 1;
+  min-width: 0;
+  max-width: 640px;
   margin: 0 auto;
 }
 
 .fetch-bar input {
   flex: 1;
-  padding: 10px 12px;
+  min-width: 0;
+  padding: 9px 12px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: var(--surface);
+  background: var(--bg);
   color: var(--text);
   font-size: 14px;
 }
 
 .paste-bar {
   max-width: 760px;
-  margin: 0 auto 10px;
+  margin: 14px auto 10px;
   padding: 0 20px;
 }
 
@@ -125,7 +134,7 @@ button#fetchBtn, button.primary {
 
 .status {
   max-width: 760px;
-  margin: 0 auto 12px;
+  margin: 12px auto;
   padding: 10px 14px;
   border-radius: 8px;
   font-size: 13px;
@@ -262,4 +271,16 @@ main {
   text-align: center;
   color: var(--text-muted);
   padding: 80px 20px;
+}
+
+@media (max-width: 820px) {
+  .topbar {
+    flex-wrap: wrap;
+  }
+  .fetch-bar {
+    order: 3;
+    flex-basis: 100%;
+    max-width: none;
+    margin: 8px 0 0;
+  }
 }
