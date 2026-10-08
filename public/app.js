@@ -35,6 +35,7 @@ const fontSizeLabel = el("fontSizeLabel");
 const lineDown = el("lineDown");
 const lineUp = el("lineUp");
 const lineHeightLabel = el("lineHeightLabel");
+const fontFamilySelect = el("fontFamilySelect");
 const autoNextToggle = el("autoNextToggle");
 
 // ---------------------------------------------------------------------------
@@ -44,16 +45,28 @@ const autoNextToggle = el("autoNextToggle");
 const settings = {
   dark: localStorage.getItem("ln.dark") === "1",
   fontSize: parseInt(localStorage.getItem("ln.fontSize") || "18", 10),
-  lineHeight: parseFloat(localStorage.getItem("ln.lineHeight") || "1.6"),
+  lineHeight: parseFloat(localStorage.getItem("ln.lineHeight") || "1.75"),
+  fontFamily: localStorage.getItem("ln.fontFamily") || "georgia",
   autoNext: localStorage.getItem("ln.autoNext") === "1",
+};
+
+const FONT_MAP = {
+  georgia: "var(--font-reading)",
+  literata: "var(--font-reading-literata)",
+  merriweather: "var(--font-reading-merriweather)",
+  "source-serif": "var(--font-reading-source-serif)",
+  bitter: "var(--font-reading-bitter)",
+  atkinson: "var(--font-reading-atkinson)",
 };
 
 function applySettings() {
   document.body.classList.toggle("dark", settings.dark);
   chapterContentEl.style.fontSize = `${settings.fontSize}px`;
   chapterContentEl.style.lineHeight = String(settings.lineHeight);
+  chapterContentEl.style.fontFamily = FONT_MAP[settings.fontFamily] || FONT_MAP.georgia;
   fontSizeLabel.textContent = `${settings.fontSize}px`;
   lineHeightLabel.textContent = settings.lineHeight.toFixed(1);
+  fontFamilySelect.value = settings.fontFamily;
   autoNextToggle.checked = settings.autoNext;
 }
 
@@ -61,6 +74,7 @@ function saveSettings() {
   localStorage.setItem("ln.dark", settings.dark ? "1" : "0");
   localStorage.setItem("ln.fontSize", String(settings.fontSize));
   localStorage.setItem("ln.lineHeight", String(settings.lineHeight));
+  localStorage.setItem("ln.fontFamily", settings.fontFamily);
   localStorage.setItem("ln.autoNext", settings.autoNext ? "1" : "0");
 }
 
@@ -87,6 +101,11 @@ lineDown.addEventListener("click", () => {
 });
 lineUp.addEventListener("click", () => {
   settings.lineHeight = Math.min(2.2, +(settings.lineHeight + 0.1).toFixed(1));
+  applySettings();
+  saveSettings();
+});
+fontFamilySelect.addEventListener("change", () => {
+  settings.fontFamily = fontFamilySelect.value;
   applySettings();
   saveSettings();
 });

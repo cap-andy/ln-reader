@@ -7,3 +7,4 @@ services:
       - "3010:3000"
     volumes:
       - ./data:/app/data
+      - ./public:/app/public
