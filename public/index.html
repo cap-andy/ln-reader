@@ -13,15 +13,19 @@
   <header id="topbar" class="topbar">
     <h1 class="brand">LN Reader</h1>
 
-    <section class="fetch-bar">
-      <input id="urlInput" type="text" placeholder="Paste a NovelPing chapter URL…" />
-      <button id="fetchBtn">Fetch chapter</button>
-      <button id="pasteModeBtn" title="If live fetch fails, parse pasted page source instead">
-        Paste HTML instead
-      </button>
-    </section>
+    <div id="topbarTitle" class="topbar-title"></div>
 
     <div class="topbar-actions">
+      <div class="fetch-wrap" id="fetchWrap">
+        <button id="fetchToggleBtn" class="icon-btn" title="Fetch a chapter">Fetch</button>
+        <section id="fetchBar" class="fetch-bar-dropdown">
+          <input id="urlInput" type="text" placeholder="Paste a NovelPing chapter URL…" />
+          <button id="fetchBtn">Fetch chapter</button>
+          <button id="pasteModeBtn" title="If live fetch fails, parse pasted page source instead">
+            Paste HTML instead
+          </button>
+        </section>
+      </div>
       <button id="bookmarkBtn" class="icon-btn" title="Bookmark this chapter" disabled>★ Bookmark</button>
       <button id="bookmarksToggle" class="icon-btn" title="Show bookmarks">Bookmarks</button>
       <button id="settingsToggle" class="icon-btn" title="Reader settings">Aa Settings</button>
@@ -107,7 +111,7 @@
     </article>
 
     <div id="emptyState" class="empty-state">
-      <p>Paste a chapter URL above to start reading.</p>
+      <p>Click Fetch above to start reading.</p>
     </div>
   </main>
 

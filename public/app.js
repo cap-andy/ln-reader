@@ -1,6 +1,11 @@
 const el = (id) => document.getElementById(id);
 
 const topbar = el("topbar");
+const topbarTitle = el("topbarTitle");
+
+const fetchWrap = el("fetchWrap");
+const fetchToggleBtn = el("fetchToggleBtn");
+const fetchBar = el("fetchBar");
 const urlInput = el("urlInput");
 const fetchBtn = el("fetchBtn");
 const pasteModeBtn = el("pasteModeBtn");
@@ -128,6 +133,33 @@ bookmarksToggle.addEventListener("click", () => {
 applySettings();
 
 // ---------------------------------------------------------------------------
+// Fetch dropdown (extends from / retracts into the Fetch button)
+// ---------------------------------------------------------------------------
+
+function openFetchBar() {
+  fetchBar.classList.add("open");
+  urlInput.focus();
+}
+function closeFetchBar() {
+  fetchBar.classList.remove("open");
+}
+
+fetchToggleBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (fetchBar.classList.contains("open")) {
+    closeFetchBar();
+  } else {
+    openFetchBar();
+  }
+});
+
+document.addEventListener("click", (e) => {
+  if (fetchBar.classList.contains("open") && !fetchWrap.contains(e.target)) {
+    closeFetchBar();
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Auto-hide top bar once the article has scrolled up beneath it
 // ---------------------------------------------------------------------------
 
@@ -149,6 +181,7 @@ function handleTopbarScroll() {
   if (hasArticle && pastThreshold) {
     if (delta > 2) {
       topbar.classList.add("topbar-hidden");
+      closeFetchBar();
     } else if (delta < -2) {
       topbar.classList.remove("topbar-hidden");
     }
@@ -170,6 +203,23 @@ window.addEventListener(
   },
   { passive: true }
 );
+
+// ---------------------------------------------------------------------------
+// Arrow-key chapter navigation
+// ---------------------------------------------------------------------------
+
+document.addEventListener("keydown", (e) => {
+  const tag = document.activeElement?.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA") return;
+
+  if (e.key === "ArrowLeft" && !prevBtn.disabled) {
+    e.preventDefault();
+    prevBtn.click();
+  } else if (e.key === "ArrowRight" && !nextBtn.disabled) {
+    e.preventDefault();
+    nextBtn.click();
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Status / error display
@@ -241,6 +291,7 @@ function renderChapter(data) {
 
   novelTitleEl.textContent = data.novelTitle || "";
   chapterTitleEl.textContent = data.chapterTitle || "";
+  topbarTitle.textContent = data.chapterTitle || "";
   chapterContentEl.innerHTML = "";
   for (const para of data.paragraphs) {
     const p = document.createElement("p");
@@ -258,6 +309,7 @@ function renderChapter(data) {
   window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
   lastScrollY = 0;
   topbar.classList.remove("topbar-hidden");
+  closeFetchBar();
   maybeOfferResume();
   observeAutoNext();
 }
