@@ -130,6 +130,35 @@ bookmarksToggle.addEventListener("click", () => {
   if (!bookmarksPanel.classList.contains("hidden")) loadBookmarks();
 });
 
+const settingsCloseBtn = el("settingsCloseBtn");
+const bookmarksCloseBtn = el("bookmarksCloseBtn");
+
+settingsCloseBtn.addEventListener("click", () => {
+  settingsPanel.classList.add("hidden");
+});
+bookmarksCloseBtn.addEventListener("click", () => {
+  bookmarksPanel.classList.add("hidden");
+});
+
+document.addEventListener("click", (e) => {
+  if (
+    !settingsPanel.classList.contains("hidden") &&
+    !settingsPanel.contains(e.target) &&
+    e.target !== settingsToggle &&
+    !settingsToggle.contains(e.target)
+  ) {
+    settingsPanel.classList.add("hidden");
+  }
+  if (
+    !bookmarksPanel.classList.contains("hidden") &&
+    !bookmarksPanel.contains(e.target) &&
+    e.target !== bookmarksToggle &&
+    !bookmarksToggle.contains(e.target)
+  ) {
+    bookmarksPanel.classList.add("hidden");
+  }
+});
+
 applySettings();
 
 // ---------------------------------------------------------------------------
