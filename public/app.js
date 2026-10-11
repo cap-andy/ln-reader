@@ -26,7 +26,7 @@ const prevBtn = el("prevBtn");
 const nextBtn = el("nextBtn");
 const autoNextIndicator = el("autoNextIndicator");
 
-const bookmarkBtn = el("bookmarkBtn");
+const bookmarkCurrentBtn = el("bookmarkCurrentBtn");
 const bookmarksToggle = el("bookmarksToggle");
 const bookmarksPanel = el("bookmarksPanel");
 const bookmarksList = el("bookmarksList");
@@ -287,7 +287,7 @@ function renderChapter(data) {
 
   emptyState.classList.add("hidden");
   reader.classList.remove("hidden");
-  bookmarkBtn.disabled = false;
+  bookmarkCurrentBtn.disabled = false;
 
   novelTitleEl.textContent = data.novelTitle || "";
   chapterTitleEl.textContent = data.chapterTitle || "";
@@ -341,7 +341,7 @@ nextBtn.addEventListener("click", () => {
 // Bookmarks
 // ---------------------------------------------------------------------------
 
-bookmarkBtn.addEventListener("click", async () => {
+bookmarkCurrentBtn.addEventListener("click", async () => {
   if (!current?.chapterId) return;
   await fetch("/api/bookmarks", {
     method: "POST",
@@ -353,8 +353,8 @@ bookmarkBtn.addEventListener("click", async () => {
       url: current.chapterUrl,
     }),
   });
-  bookmarkBtn.textContent = "★ Saved";
-  setTimeout(() => (bookmarkBtn.textContent = "★ Bookmark"), 1200);
+  bookmarkCurrentBtn.textContent = "★ Saved";
+  setTimeout(() => (bookmarkCurrentBtn.textContent = "★ Bookmark this chapter"), 1200);
 });
 
 async function loadBookmarks() {
