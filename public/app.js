@@ -421,35 +421,94 @@ async function loadBookmarks() {
 // ---------------------------------------------------------------------------
 
 function currentScrollPercent() {
-  const rect = reader.getBoundingClientRect();
-  const total = reader.scrollHeight - window.innerHeight;
+  const total = document.body.scrollHeight - window.innerHeight;
   if (total <= 0) return 100;
-  const scrolled = window.scrollY - (reader.offsetTop - 0);
-  const percent = (window.scrollY / (document.body.scrollHeight - window.innerHeight)) * 100;
+  const percent = (window.scrollY / total) * 100;
   return Math.max(0, Math.min(100, Math.round(percent)));
+}
+
+// Last percent actually written per chapter, so an unchanged scroll
+// position (e.g. tiny jitter, or scrolling back to a spot already saved)
+// doesn't trigger a redundant localStorage write + network request.
+const lastSavedPercent = {};
+
+// The chapter+meta a pending debounced save is for, captured at the moment
+// the save is scheduled - not read fresh when the timer fires. Without
+// this, switching chapters while a save is still pending (e.g. clicking
+// Next within the debounce window) would write the new chapter's scroll
+// position (usually 0, right after auto-scroll-to-top) under the OLD
+// chapter's id.
+let pendingSave = null;
+
+function doSaveProgress(chapterId, percent, meta, keepalive = false) {
+  if (lastSavedPercent[chapterId] === percent) return;
+  lastSavedPercent[chapterId] = percent;
+
+  localStorage.setItem(`ln.progress.${chapterId}`, String(percent));
+
+  fetch(`/api/progress/${encodeURIComponent(chapterId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    // keepalive lets this request complete even if the tab is being
+    // closed/navigated away from right as it fires (used for the
+    // beforeunload/visibilitychange flush below).
+    keepalive,
+    body: JSON.stringify({
+      percent,
+      novelTitle: meta.novelTitle,
+      chapterTitle: meta.chapterTitle,
+      url: meta.chapterUrl,
+    }),
+  }).catch((err) => {
+    // Swallow network errors here (progress saving should never interrupt
+    // reading), but don't pretend it succeeded - let the next scroll event
+    // retry, since lastSavedPercent was already updated optimistically.
+    // Roll it back so a genuine retry is still attempted.
+    if (lastSavedPercent[chapterId] === percent) {
+      delete lastSavedPercent[chapterId];
+    }
+    console.warn("Failed to save reading progress:", err);
+  });
 }
 
 function saveProgressDebounced() {
   if (!current?.chapterId) return;
+  const chapterId = current.chapterId;
+  const meta = {
+    novelTitle: current.novelTitle,
+    chapterTitle: current.chapterTitle,
+    chapterUrl: current.chapterUrl,
+  };
+  const percent = currentScrollPercent();
+
+  if (lastSavedPercent[chapterId] === percent) return;
+
+  pendingSave = { chapterId, percent, meta };
   clearTimeout(progressSaveTimer);
-  progressSaveTimer = setTimeout(async () => {
-    const percent = currentScrollPercent();
-    localStorage.setItem(`ln.progress.${current.chapterId}`, String(percent));
-    await fetch(`/api/progress/${encodeURIComponent(current.chapterId)}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        percent,
-        novelTitle: current.novelTitle,
-        chapterTitle: current.chapterTitle,
-        url: current.chapterUrl,
-      }),
-    });
+  progressSaveTimer = setTimeout(() => {
+    if (!pendingSave) return;
+    doSaveProgress(pendingSave.chapterId, pendingSave.percent, pendingSave.meta);
+    pendingSave = null;
   }, 500);
+}
+
+function flushPendingProgressSave() {
+  if (!pendingSave) return;
+  clearTimeout(progressSaveTimer);
+  doSaveProgress(pendingSave.chapterId, pendingSave.percent, pendingSave.meta, true);
+  pendingSave = null;
 }
 
 window.addEventListener("scroll", () => {
   saveProgressDebounced();
+});
+
+// Flush any pending (debounced but not-yet-sent) save the moment the tab
+// is hidden or closed, so switching apps or closing mid-chapter doesn't
+// lose up to 500ms of the most recent scroll position.
+window.addEventListener("beforeunload", flushPendingProgressSave);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") flushPendingProgressSave();
 });
 
 async function maybeOfferResume() {
