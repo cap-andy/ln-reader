@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>LN Reader</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📖</text></svg>" />
 <link rel="stylesheet" href="styles.css" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -11,44 +12,22 @@
 </head>
 <body>
   <header id="topbar" class="topbar">
-    <h1 class="brand">LN Reader</h1>
+    <a href="#/" class="brand">LN Reader</a>
 
     <div id="topbarTitle" class="topbar-title"></div>
 
     <div class="topbar-actions">
-      <div class="fetch-wrap" id="fetchWrap">
-        <button id="fetchToggleBtn" class="icon-btn" title="Fetch a chapter">Fetch</button>
-        <section id="fetchBar" class="fetch-bar-dropdown">
-          <input id="urlInput" type="text" placeholder="Paste a NovelPing chapter URL…" />
-          <button id="fetchBtn">Fetch chapter</button>
-          <button id="pasteModeBtn" title="If live fetch fails, parse pasted page source instead">
-            Paste HTML instead
-          </button>
-        </section>
-      </div>
       <button id="bookmarksToggle" class="icon-btn" title="Bookmarks">★ Bookmarks</button>
       <button id="settingsToggle" class="icon-btn" title="Reader settings">Aa Settings</button>
       <button id="themeToggle" class="icon-btn" title="Toggle dark mode">🌓</button>
+      <div id="authArea" class="auth-area"></div>
     </div>
   </header>
-
-  <!-- Fallback: paste raw page source when live fetch is blocked -->
-  <section id="pasteBar" class="paste-bar hidden">
-    <p class="hint">
-      Live fetch failed or is disabled. Open the chapter in your browser, use
-      <kbd>Ctrl/Cmd+U</kbd> (View Page Source), copy everything, and paste it below.
-    </p>
-    <textarea id="pasteArea" placeholder="Paste full page HTML here…"></textarea>
-    <div class="paste-bar-actions">
-      <button id="parsePasteBtn">Parse pasted HTML</button>
-      <button id="cancelPasteBtn" class="secondary">Cancel</button>
-    </div>
-  </section>
 
   <div id="statusMsg" class="status hidden"></div>
 
   <main>
-    <!-- Bookmarks drawer -->
+    <!-- Bookmarks drawer (global, available from any view) -->
     <aside id="bookmarksPanel" class="panel hidden">
       <div class="panel-header"><h2>Bookmarks</h2><button id="bookmarksCloseBtn" class="panel-close" title="Close">✕</button></div>
       <button id="bookmarkCurrentBtn" class="primary bookmark-current-btn" disabled>
@@ -57,7 +36,7 @@
       <ul id="bookmarksList"></ul>
     </aside>
 
-    <!-- Settings drawer -->
+    <!-- Settings drawer (global) -->
     <aside id="settingsPanel" class="panel hidden">
       <div class="panel-header"><h2>Reader settings</h2><button id="settingsCloseBtn" class="panel-close" title="Close">✕</button></div>
 
@@ -99,24 +78,136 @@
       </div>
     </aside>
 
-    <article id="reader" class="reader hidden">
-      <p class="novel-title" id="novelTitle"></p>
-      <h2 id="chapterTitle"></h2>
-      <div id="chapterContent" class="chapter-content"></div>
-      <div id="bottomSentinel" class="bottom-sentinel"></div>
+    <!-- ==================== Home: novel grid ==================== -->
+    <section id="view-home" class="view hidden">
+      <div id="resumeBar" class="resume-bar hidden">
+        <div class="resume-bar-text">
+          <span class="resume-bar-label">Resume reading</span>
+          <span id="resumeBarTitle" class="resume-bar-title"></span>
+        </div>
+        <button id="resumeReadingBtn" class="primary">▶ Continue</button>
+      </div>
 
-      <nav class="chapter-nav">
-        <button id="prevBtn" disabled>← Previous</button>
-        <span id="autoNextIndicator" class="auto-next-indicator hidden">Loading next chapter…</span>
-        <button id="nextBtn" disabled>Next →</button>
-      </nav>
-    </article>
+      <div class="view-header">
+        <h2>Novels</h2>
+        <div class="fetch-wrap" id="addNovelWrap">
+          <button id="addNovelToggleBtn" class="icon-btn" title="Add a novel">+ Add novel</button>
+          <section id="addNovelBar" class="fetch-bar-dropdown">
+            <input id="addNovelUrlInput" type="text" placeholder="Paste a NovelPing book URL…" />
+            <button id="addNovelBtn">Add novel</button>
+            <button id="addNovelPasteModeBtn" title="If live fetch fails, parse pasted page source instead">
+              Paste HTML instead
+            </button>
+          </section>
+        </div>
+      </div>
 
-    <div id="emptyState" class="empty-state">
-      <p>Click Fetch above to start reading.</p>
-    </div>
+      <section id="addNovelPasteBar" class="paste-bar hidden">
+        <p class="hint">
+          Live fetch failed or is disabled. Open the novel's page in your browser, use
+          <kbd>Ctrl/Cmd+U</kbd> (View Page Source), copy everything, and paste it below.
+        </p>
+        <textarea id="addNovelPasteArea" placeholder="Paste full page HTML here…"></textarea>
+        <div class="paste-bar-actions">
+          <button id="addNovelParsePasteBtn">Parse pasted HTML</button>
+          <button id="addNovelCancelPasteBtn" class="secondary">Cancel</button>
+        </div>
+      </section>
+
+      <div id="novelGrid" class="novel-grid"></div>
+      <div id="homeEmptyState" class="empty-state hidden">
+        <p>No novels yet. Click <strong>+ Add novel</strong> and paste a NovelPing book URL to get started.</p>
+      </div>
+    </section>
+
+    <!-- ==================== Novel detail ==================== -->
+    <section id="view-novel" class="view hidden">
+      <a href="#/" class="back-link">← All novels</a>
+
+      <article class="novel-detail">
+        <img id="novelCover" class="novel-cover" alt="" />
+        <div class="novel-info">
+          <h1 id="novelDetailTitle"></h1>
+          <div id="novelMeta" class="novel-meta"></div>
+          <div id="novelDescription" class="novel-description"></div>
+
+          <div class="novel-actions-row">
+            <button id="continueReadingBtn" class="primary hidden"></button>
+            <button id="startReadingBtn" class="hidden"></button>
+            <button id="deleteNovelBtn" class="danger hidden">🗑 Delete novel</button>
+          </div>
+        </div>
+      </article>
+
+      <div class="view-header">
+        <h2>Chapters</h2>
+        <div class="fetch-wrap" id="novelFetchWrap">
+          <button id="novelFetchToggleBtn" class="icon-btn" title="Fetch a specific chapter">Fetch chapter</button>
+          <section id="novelFetchBar" class="fetch-bar-dropdown">
+            <input id="novelUrlInput" type="text" placeholder="Paste a NovelPing chapter URL…" />
+            <button id="novelFetchBtn">Fetch chapter</button>
+            <button id="novelPasteModeBtn" title="If live fetch fails, parse pasted page source instead">
+              Paste HTML instead
+            </button>
+          </section>
+        </div>
+      </div>
+
+      <section id="novelPasteBar" class="paste-bar hidden">
+        <p class="hint">
+          Live fetch failed or is disabled. Open the chapter in your browser, use
+          <kbd>Ctrl/Cmd+U</kbd> (View Page Source), copy everything, and paste it below.
+        </p>
+        <textarea id="novelPasteArea" placeholder="Paste full page HTML here…"></textarea>
+        <div class="paste-bar-actions">
+          <button id="novelParsePasteBtn">Parse pasted HTML</button>
+          <button id="novelCancelPasteBtn" class="secondary">Cancel</button>
+        </div>
+      </section>
+
+      <ul id="novelChapterList" class="chapter-list"></ul>
+    </section>
+
+    <!-- ==================== Reader ==================== -->
+    <section id="view-reader" class="view hidden">
+      <article id="reader" class="reader">
+        <p class="novel-title" id="novelTitle"></p>
+        <h2 id="chapterTitle"></h2>
+        <div id="chapterContent" class="chapter-content"></div>
+        <div id="bottomSentinel" class="bottom-sentinel"></div>
+
+        <nav class="chapter-nav">
+          <button id="prevBtn" disabled>← Previous</button>
+          <span id="autoNextIndicator" class="auto-next-indicator hidden">Loading next chapter…</span>
+          <button id="nextBtn" disabled>Next →</button>
+        </nav>
+      </article>
+    </section>
+
+    <!-- ==================== Login / Register ==================== -->
+    <section id="view-auth" class="view hidden">
+      <div class="auth-card">
+        <div class="auth-tabs">
+          <button id="authTabLogin" class="auth-tab active">Log in</button>
+          <button id="authTabRegister" class="auth-tab">Register</button>
+        </div>
+
+        <form id="authForm" class="auth-form">
+          <label>
+            Username
+            <input id="authUsername" type="text" autocomplete="username" required />
+          </label>
+          <label>
+            Password
+            <input id="authPassword" type="password" autocomplete="current-password" required />
+          </label>
+          <button id="authSubmitBtn" type="submit" class="primary">Log in</button>
+          <p id="authError" class="auth-error hidden"></p>
+        </form>
+      </div>
+    </section>
   </main>
 
-  <script src="app.js"></script>
+  <script type="module" src="js/app.js"></script>
 </body>
 </html>
