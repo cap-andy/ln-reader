@@ -8,3 +8,21 @@ services:
     volumes:
       - ./data:/app/data
       - ./public:/app/public
+    environment:
+      DATABASE_URL: postgres://ln_reader:${POSTGRES_PASSWORD}@postgres:5432/ln_reader
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: ln-reader-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ln_reader
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ln_reader
+    volumes:
+      - ln-reader-pgdata:/var/lib/postgresql/data
+
+volumes:
+  ln-reader-pgdata:
