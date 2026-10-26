@@ -13,71 +13,18 @@ import {
   validateUsername,
   validatePassword,
 } from "./lib/auth.js";
-import { readJson, writeJson, withFileLock } from "./lib/store.js";
+import { pool, query } from "./lib/db.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, "data");
 const CACHE_DIR = path.join(DATA_DIR, "cache");
 const NOVEL_CACHE_DIR = path.join(CACHE_DIR, "novels");
-const USERS_FILE = path.join(DATA_DIR, "users.json");
-const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
-const NOVELS_FILE = path.join(DATA_DIR, "novels.json");
-const BOOKMARKS_FILE = path.join(DATA_DIR, "bookmarks.json");
-const PROGRESS_FILE = path.join(DATA_DIR, "progress.json");
-
 const PORT = process.env.PORT || 3000;
 const SESSION_COOKIE = "lnr_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days
 
-// --- one-time migration from the pre-login data format ---------------------
-// bookmarks.json used to be a flat array; progress.json used to be keyed
-// directly by chapterId. Both are now per-user. Rather than guess at a
-// mapping (there's no userId or reliable novelId on the old entries), the
-// old files are backed up untouched and the app starts fresh — you can
-// still open the .bak files by hand if you want to recover anything.
-async function migrateLegacyDataIfNeeded() {
-  try {
-    const raw = await fs.readFile(BOOKMARKS_FILE, "utf8");
-    if (Array.isArray(JSON.parse(raw))) {
-      await fs.rename(BOOKMARKS_FILE, path.join(DATA_DIR, "bookmarks.pre-auth.json.bak"));
-      console.log(
-        "[migrate] bookmarks.json was in the old (pre-login) format — backed up to data/bookmarks.pre-auth.json.bak"
-      );
-    }
-  } catch {
-    // missing or unreadable — fine, ensureDataFiles() will create a fresh one
-  }
-
-  try {
-    const raw = await fs.readFile(PROGRESS_FILE, "utf8");
-    const parsed = JSON.parse(raw);
-    const looksLegacy = Object.values(parsed).some((v) => v && typeof v === "object" && "percent" in v);
-    if (looksLegacy) {
-      await fs.rename(PROGRESS_FILE, path.join(DATA_DIR, "progress.pre-auth.json.bak"));
-      console.log(
-        "[migrate] progress.json was in the old (pre-login) format — backed up to data/progress.pre-auth.json.bak"
-      );
-    }
-  } catch {
-    // missing or unreadable — fine
-  }
-}
-
 async function ensureDataFiles() {
   await fs.mkdir(NOVEL_CACHE_DIR, { recursive: true });
-  for (const [file, fallback] of [
-    [USERS_FILE, "[]"],
-    [SESSIONS_FILE, "{}"],
-    [NOVELS_FILE, "[]"],
-    [BOOKMARKS_FILE, "{}"],
-    [PROGRESS_FILE, "{}"],
-  ]) {
-    try {
-      await fs.access(file);
-    } catch {
-      await fs.writeFile(file, fallback, "utf8");
-    }
-  }
 }
 
 // --- polite rate limiting for live fetches ---------------------------------
@@ -116,20 +63,27 @@ app.use(cookieParser());
 
 // --- auth: cookie session -> req.user ---------------------------------------
 
+
 async function attachUser(req, _res, next) {
   req.user = null;
   const token = req.cookies?.[SESSION_COOKIE];
   if (token) {
-    const sessions = await readJson(SESSIONS_FILE, {});
-    const session = sessions[token];
-    if (session && Date.now() - session.createdAt < SESSION_TTL_MS) {
-      const users = await readJson(USERS_FILE, []);
-      const user = users.find((u) => u.id === session.userId);
-      if (user) req.user = { id: user.id, username: user.username };
+    // TODO: look up the session by token, then the user it belongs to.
+    // Hint: you can do this as one query with a JOIN on sessions.user_id = users.id,
+    // filtering sessions.token = $1 and sessions.created_at > now() - interval '30 days'
+    // (that replaces the old SESSION_TTL_MS check).
+    // Set req.user = { id: ..., username: ... } if found.
+    const session = await query(
+      "SELECT users.id, users.username FROM sessions JOIN users on sessions.user_id = users.id WHERE token = $1 and sessions.created_at > now() - interval '30 days';",
+      [token]
+    );
+    if (session.rows[0]){
+      req.user = { id: session.rows[0].id, username: session.rows[0].username };
     }
   }
   next();
 }
+
 app.use(attachUser);
 
 function requireAuth(req, res, next) {
@@ -139,11 +93,10 @@ function requireAuth(req, res, next) {
 
 async function setSessionCookie(res, userId) {
   const token = newSessionToken();
-  await withFileLock(SESSIONS_FILE, async () => {
-    const sessions = await readJson(SESSIONS_FILE, {});
-    sessions[token] = { userId, createdAt: Date.now() };
-    await writeJson(SESSIONS_FILE, sessions);
-  });
+  await query(
+    "INSERT INTO sessions (token, user_id) VALUES ($1, $2);",
+    [token, userId]
+  );
   res.cookie(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
@@ -157,31 +110,30 @@ app.use(express.static(path.join(__dirname, "public")));
 // --- auth routes -------------------------------------------------------------
 
 app.post("/api/auth/register", async (req, res) => {
+  let user;
   const { username, password } = req.body || {};
   const usernameErr = validateUsername(username);
   if (usernameErr) return res.status(400).json({ error: usernameErr });
   const passwordErr = validatePassword(password);
   if (passwordErr) return res.status(400).json({ error: passwordErr });
 
-  const result = await withFileLock(USERS_FILE, async () => {
-    const users = await readJson(USERS_FILE, []);
-    const taken = users.some((u) => u.username.toLowerCase() === username.trim().toLowerCase());
-    if (taken) return { error: "That username is already taken.", status: 409 };
-
-    const user = {
-      id: newUserId(),
-      username: username.trim(),
-      passwordHash: await hashPassword(password),
-      createdAt: new Date().toISOString(),
-    };
-    users.push(user);
-    await writeJson(USERS_FILE, users);
-    return { user };
-  });
-
-  if (result.error) return res.status(result.status).json({ error: result.error });
-  await setSessionCookie(res, result.user.id);
-  res.json({ id: result.user.id, username: result.user.username });
+  const userExist = await query(
+    "SELECT username FROM users WHERE LOWER(username) = LOWER($1);",
+    [username]
+  );
+  if (userExist.rows[0]){
+    res.status(409).json({ error: "That username is already taken." });
+    return;
+  } else {
+    const passwordHash = await hashPassword(password);
+    const result = await query(
+      "INSERT INTO users (id, username, password_hash) VALUES ($1, $2, $3) RETURNING id, username;",
+      [newUserId(), username, passwordHash]
+    );
+    user = result.rows[0];
+  }
+  await setSessionCookie(res, user.id);
+  res.json({ id: user.id, username: user.username })
 });
 
 app.post("/api/auth/login", async (req, res) => {
@@ -189,23 +141,30 @@ app.post("/api/auth/login", async (req, res) => {
   if (!username || !password) {
     return res.status(400).json({ error: "Username and password are required." });
   }
-  const users = await readJson(USERS_FILE, []);
-  const user = users.find((u) => u.username.toLowerCase() === String(username).trim().toLowerCase());
-  if (!user || !(await verifyPassword(password, user.passwordHash))) {
-    return res.status(401).json({ error: "Invalid username or password." });
+  const result = await query(
+    "SELECT id, username, password_hash FROM users WHERE LOWER(username) = LOWER($1)",
+    [username]
+  );
+  if (!result.rows[0]) {
+    res.status(401).json({ error: "Invalid username or password." });
+    return;
   }
+  const user = result.rows[0];
+  if (!await verifyPassword(password, user.password_hash)){
+      res.status(401).json({ error: "Invalid username or password." });
+      return;
+    }
   await setSessionCookie(res, user.id);
-  res.json({ id: user.id, username: user.username });
+  res.json({ id: user.id, username: user.username })
 });
 
 app.post("/api/auth/logout", async (req, res) => {
   const token = req.cookies?.[SESSION_COOKIE];
   if (token) {
-    await withFileLock(SESSIONS_FILE, async () => {
-      const sessions = await readJson(SESSIONS_FILE, {});
-      delete sessions[token];
-      await writeJson(SESSIONS_FILE, sessions);
-    });
+    await query(
+      "DELETE FROM sessions WHERE token = $1",
+      [token]
+    );
   }
   res.clearCookie(SESSION_COOKIE, { path: "/" });
   res.json({ ok: true });
@@ -273,51 +232,68 @@ async function novelCacheWrite(novelId, data) {
   await fs.writeFile(path.join(NOVEL_CACHE_DIR, `${novelId}.json`), JSON.stringify(data, null, 2), "utf8");
 }
 
-function toNovelRecord(parsed, user) {
-  return {
-    id: parsed.novelId,
-    novelUrl: parsed.novelUrl,
-    title: parsed.title,
-    description: parsed.description,
-    descriptionHtml: parsed.descriptionHtml,
-    coverUrl: parsed.coverUrl,
-    author: parsed.author,
-    genres: parsed.genres,
-    status: parsed.status,
-    firstChapterUrl: parsed.firstChapterUrl,
-    latestChapterName: parsed.latestChapterName,
-    latestChapterUrl: parsed.latestChapterUrl,
-    chapters: parsed.chapters,
-    addedBy: user.id,
-    addedByUsername: user.username,
-    createdAt: new Date().toISOString(),
-  };
-}
-
-/** Saves a newly-parsed novel unless one with the same id already exists globally. */
-async function saveNovelFromParsed(parsed, user) {
-  return withFileLock(NOVELS_FILE, async () => {
-    const novels = await readJson(NOVELS_FILE, []);
-    const existing = novels.find((n) => n.id === parsed.novelId);
-    if (existing) return { novel: existing, created: false };
-    const novel = toNovelRecord(parsed, user);
-    novels.unshift(novel);
-    await writeJson(NOVELS_FILE, novels);
-    return { novel, created: true };
-  });
-}
-
 /** GET /api/novels — every novel added by any user (lightweight, for the homepage grid). */
 app.get("/api/novels", async (_req, res) => {
-  const novels = await readJson(NOVELS_FILE, []);
-  const list = novels.map(({ chapters, descriptionHtml, ...rest }) => rest);
-  res.json(list);
+  const result = await query(
+    `SELECT
+      id,
+      novel_url AS "novelUrl",
+      title,
+      description,
+      cover_url AS "coverUrl",
+      author,
+      status,
+      first_chapter_url AS "firstChapterUrl",
+      latest_chapter_name AS "latestChapterName",
+      latest_chapter_url AS "latestChapterUrl",
+      added_by AS "addedBy",
+      created_at AS "createdAt"
+    FROM novels
+    ORDER BY created_at DESC`
+  );
+  res.json(result.rows);
 });
 
+/** Fetches one novel with its genres and chapters attached, or null if it doesn't exist. */
+async function getFullNovel(novelId) {
+  const novelRowResult = await query (
+    `SELECT
+      id,
+      novel_url AS "novelUrl",
+      title,
+      description,
+      cover_url AS "coverUrl",
+      author,
+      status,
+      first_chapter_url AS "firstChapterUrl",
+      latest_chapter_name AS "latestChapterName",
+      latest_chapter_url AS "latestChapterUrl",
+      added_by AS "addedBy",
+      created_at AS "createdAt"
+    FROM novels
+    WHERE id = $1`,
+    [novelId]
+  );
+  const novelRow = novelRowResult.rows[0]
+  if (!novelRow) return null;
+
+  const genresResult = await query (
+    "SELECT genre FROM novel_genres WHERE novel_id = $1",
+    [novelId]
+  );
+  const genres = genresResult.rows.map(row => row.genre);
+
+  const chaptersResult = await query (
+    "SELECT chapter_id, title, url FROM novel_chapters WHERE novel_id = $1 ORDER BY position",
+    [novelId]
+  );
+  const chapters = chaptersResult.rows.map((row) => ({ id: row.chapter_id, title: row.title, url: row.url }));
+
+  return{...novelRow, genres, chapters};
+}  
 /** GET /api/novels/:id — full detail, including its chapter list. */
 app.get("/api/novels/:id", async (req, res) => {
-  const novels = await readJson(NOVELS_FILE, []);
-  const novel = novels.find((n) => n.id === req.params.id);
+  const novel = await getFullNovel(req.params.id);
   if (!novel) return res.status(404).json({ error: "Novel not found." });
   res.json(novel);
 });
@@ -326,41 +302,66 @@ app.get("/api/novels/:id", async (req, res) => {
 app.delete("/api/novels/:id", requireAuth, async (req, res) => {
   const novelId = req.params.id;
 
-  const result = await withFileLock(NOVELS_FILE, async () => {
-    const novels = await readJson(NOVELS_FILE, []);
-    const novel = novels.find((n) => n.id === novelId);
-    if (!novel) return { error: "Novel not found.", status: 404 };
-    if (novel.addedBy !== req.user.id) {
-      return { error: "Only the person who added this novel can delete it.", status: 403 };
-    }
-    const next = novels.filter((n) => n.id !== novelId);
-    await writeJson(NOVELS_FILE, next);
-    return { ok: true };
-  });
-
-  if (result.error) return res.status(result.status).json({ error: result.error });
+  const result = await query(
+    "SELECT * FROM novels WHERE id = $1",
+    [novelId]
+  );
+  const novel = result.rows[0];
+  if (!novel){
+    res.status(404).json({ error: "Novel not found." });
+    return;
+  } 
+  else if (novel.added_by !== req.user.id) {
+    res.status(403).json({ error: "Only the person who added this novel can delete it." });
+    return;
+  }
+  else{
+    await query(
+    "DELETE FROM novels WHERE id = $1",
+    [novelId]
+    );
+  }
 
   // Best-effort cleanup — never block the delete response on these.
   await fs.unlink(path.join(NOVEL_CACHE_DIR, `${novelId}.json`)).catch(() => {});
 
-  await withFileLock(PROGRESS_FILE, async () => {
-    const all = await readJson(PROGRESS_FILE, {});
-    for (const userId of Object.keys(all)) {
-      if (all[userId] && novelId in all[userId]) delete all[userId][novelId];
-    }
-    await writeJson(PROGRESS_FILE, all);
-  });
-
-  await withFileLock(BOOKMARKS_FILE, async () => {
-    const all = await readJson(BOOKMARKS_FILE, {});
-    for (const userId of Object.keys(all)) {
-      all[userId] = (all[userId] || []).filter((b) => b.novelId !== novelId);
-    }
-    await writeJson(BOOKMARKS_FILE, all);
-  });
-
   res.json({ ok: true });
 });
+
+async function insertFullNovel(parsed, userId) {
+  const client = await pool.connect(); // grab one dedicated connection
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `INSERT INTO novels (id, novel_url, title, description, description_html, cover_url, author, status, first_chapter_url, latest_chapter_name, latest_chapter_url, added_by)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [parsed.novelId, parsed.novelUrl, parsed.title, parsed.description, parsed.descriptionHtml, parsed.coverUrl, parsed.author, parsed.status, parsed.firstChapterUrl, parsed.latestChapterName, parsed.latestChapterUrl, userId]
+    );
+
+    for (const genre of parsed.genres) {
+      await client.query(
+        "INSERT INTO novel_genres (novel_id, genre) VALUES ($1, $2)",
+        [parsed.novelId, genre]
+      );
+    }
+
+    for (let i = 0; i < parsed.chapters.length; i++) {
+      const chapter = parsed.chapters[i];
+      await client.query(
+        `INSERT INTO novel_chapters(novel_id, chapter_id, title, url, position)
+        VALUES ($1, $2, $3, $4, $5)`,
+        [parsed.novelId, chapter.id, chapter.title, chapter.url, i + 1]
+      );
+    }
+
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK"); // undo everything since BEGIN
+    throw err; // let the caller know it failed
+  } finally {
+    client.release(); // always give the connection back to the pool
+  }
+}
 
 /** POST /api/novels/fetch — { url } live-fetch a NovelPing book page and add it. */
 app.post("/api/novels/fetch", requireAuth, async (req, res) => {
@@ -371,7 +372,17 @@ app.post("/api/novels/fetch", requireAuth, async (req, res) => {
     const html = await politeFetch(url);
     const parsed = parseNovelHtml(html, url);
     await novelCacheWrite(parsed.novelId, parsed);
-    const { novel, created } = await saveNovelFromParsed(parsed, req.user);
+    const existing = await getFullNovel(parsed.novelId);
+    let novel; 
+    let created;
+    if (existing){
+      novel = existing;
+      created = false;
+    } else{
+      await insertFullNovel(parsed, req.user.id);
+      novel = await getFullNovel(parsed.novelId);
+      created = true;
+    }
     res.json({ ...novel, created });
   } catch (err) {
     res.status(502).json({
@@ -389,7 +400,18 @@ app.post("/api/novels/parse", requireAuth, async (req, res) => {
   try {
     const parsed = parseNovelHtml(html, url || null);
     await novelCacheWrite(parsed.novelId, parsed);
-    const { novel, created } = await saveNovelFromParsed(parsed, req.user);
+
+    const existing = await getFullNovel(parsed.novelId);
+    let novel;
+    let created;
+    if (existing) {
+      novel = existing;
+      created = false;
+    } else {
+      await insertFullNovel(parsed, req.user.id);
+      novel = await getFullNovel(parsed.novelId);
+      created = true;
+    }
     res.json({ ...novel, created });
   } catch (err) {
     res.status(422).json({ error: String(err.message || err) });
@@ -397,10 +419,26 @@ app.post("/api/novels/parse", requireAuth, async (req, res) => {
 });
 
 // --- bookmarks (per-user) ----------------------------------------------------
+async function listBookmarksForUser(userId) {
+  const result = await query (
+    `SELECT id,
+    novel_id AS "novelId",
+    chapter_id AS "chapterId",
+    chapter_title AS "chapterTitle",
+    url,
+    saved_at AS "savedAt",
+    novel_title AS "novelTitle"
+    FROM bookmarks 
+    WHERE user_id = $1 
+    ORDER BY saved_at DESC`,
+    [userId]
+  );
+  return result.rows;
+}
 
 app.get("/api/bookmarks", requireAuth, async (req, res) => {
-  const all = await readJson(BOOKMARKS_FILE, {});
-  res.json(all[req.user.id] || []);
+  const bookmarks = await listBookmarksForUser(req.user.id);
+  res.json(bookmarks);
 });
 
 app.post("/api/bookmarks", requireAuth, async (req, res) => {
@@ -408,35 +446,25 @@ app.post("/api/bookmarks", requireAuth, async (req, res) => {
   if (!chapterId || !url) {
     return res.status(400).json({ error: "Need chapterId and url" });
   }
-  const mine = await withFileLock(BOOKMARKS_FILE, async () => {
-    const all = await readJson(BOOKMARKS_FILE, {});
-    const list = all[req.user.id] || [];
-    if (!list.some((b) => b.chapterId === chapterId)) {
-      list.unshift({
-        chapterId,
-        chapterTitle,
-        novelTitle,
-        novelId: novelId || null,
-        url,
-        savedAt: new Date().toISOString(),
-      });
-    }
-    all[req.user.id] = list;
-    await writeJson(BOOKMARKS_FILE, all);
-    return list;
-  });
-  res.json(mine);
+  await query(
+    `INSERT INTO bookmarks(user_id, chapter_id, chapter_title, novel_title, novel_id, url)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT(user_id, chapter_id)
+    DO NOTHING`,
+    [req.user.id, chapterId, chapterTitle, novelTitle, novelId, url]
+  );
+  const bookmarks = await listBookmarksForUser(req.user.id);
+  res.json(bookmarks);
 });
 
 app.delete("/api/bookmarks/:chapterId", requireAuth, async (req, res) => {
-  const mine = await withFileLock(BOOKMARKS_FILE, async () => {
-    const all = await readJson(BOOKMARKS_FILE, {});
-    const list = (all[req.user.id] || []).filter((b) => b.chapterId !== req.params.chapterId);
-    all[req.user.id] = list;
-    await writeJson(BOOKMARKS_FILE, all);
-    return list;
-  });
-  res.json(mine);
+  await query(`DELETE FROM bookmarks 
+    WHERE user_id = $1 AND chapter_id = $2;`,
+    [req.user.id, req.params.chapterId]
+  );
+  
+  const bookmarks = await listBookmarksForUser(req.user.id);
+  res.json(bookmarks); 
 });
 
 // --- reading progress (per-user, per-novel) ----------------------------------
@@ -444,44 +472,98 @@ app.delete("/api/bookmarks/:chapterId", requireAuth, async (req, res) => {
 // can be partway through several novels at once without them colliding.
 
 app.get("/api/progress", requireAuth, async (req, res) => {
-  const all = await readJson(PROGRESS_FILE, {});
-  res.json(all[req.user.id] || {});
+  const result = await query(
+    "SELECT * FROM progress WHERE user_id = $1",
+    [req.user.id]
+  );
+  const progress = {};
+  for (const row of result.rows) {
+    progress[row.novel_id] = {
+      chapterId: row.chapter_id,
+      chapterTitle: row.chapter_title,
+      chapterUrl: row.chapter_url,
+      novelTitle: row.novel_title,
+      percent: row.percent,
+      updatedAt: row.updated_at,
+    };
+  }
+  res.json(progress);
 });
 
 app.get("/api/progress/:novelId", requireAuth, async (req, res) => {
-  const all = await readJson(PROGRESS_FILE, {});
-  res.json(all[req.user.id]?.[req.params.novelId] || null);
+  const result = await query(
+    "SELECT * FROM progress WHERE user_id = $1 AND novel_id = $2",
+    [req.user.id, req.params.novelId]
+  );
+
+  if (!result.rows[0]) {
+    return res.json(null);
+  };
+
+  const row = result.rows[0];
+   const progress ={
+    chapterId: row.chapter_id,
+    chapterTitle: row.chapter_title,
+    chapterUrl: row.chapter_url,
+    novelTitle: row.novel_title,
+    percent: row.percent,
+    updatedAt: row.updated_at,
+  }
+  res.json(progress);  
 });
 
 app.put("/api/progress/:novelId", requireAuth, async (req, res) => {
   const { chapterId, chapterTitle, chapterUrl, novelTitle, percent } = req.body || {};
-  const entry = {
-    chapterId: chapterId || null,
-    chapterTitle: chapterTitle || null,
-    chapterUrl: chapterUrl || null,
-    novelTitle: novelTitle || null,
-    percent: Math.max(0, Math.min(100, Number(percent) || 0)),
-    updatedAt: new Date().toISOString(),
-  };
-  await withFileLock(PROGRESS_FILE, async () => {
-    const all = await readJson(PROGRESS_FILE, {});
-    all[req.user.id] = all[req.user.id] || {};
-    all[req.user.id][req.params.novelId] = entry;
-    await writeJson(PROGRESS_FILE, all);
-  });
-  res.json(entry);
+  const safePercent = Math.max(0, Math.min(100, Number(percent) || 0));
+  // TODO: save this as the user's progress for this novel.
+  const result = await query(
+    `INSERT INTO progress (user_id, novel_id, chapter_id, chapter_title, chapter_url, novel_title, percent)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    ON CONFLICT (user_id, novel_id)
+    DO UPDATE SET
+      chapter_id = EXCLUDED.chapter_id,
+      chapter_title = EXCLUDED.chapter_title,
+      chapter_url = EXCLUDED.chapter_url,
+      novel_title = EXCLUDED.novel_title,
+      percent = EXCLUDED.percent,
+      updated_at = now()
+    RETURNING *;`,
+    [req.user.id, req.params.novelId, chapterId, chapterTitle, chapterUrl, novelTitle, safePercent]
+  );
+  const row = result.rows[0];
+   const progress ={
+    chapterId: row.chapter_id,
+    chapterTitle: row.chapter_title,
+    chapterUrl: row.chapter_url,
+    novelTitle: row.novel_title,
+    percent: row.percent,
+    updatedAt: row.updated_at,
+  }
+  res.json(progress); 
 });
 
 /** GET /api/continue — this user's most recently updated novel, for a "resume" shortcut. */
 app.get("/api/continue", requireAuth, async (req, res) => {
-  const all = await readJson(PROGRESS_FILE, {});
-  const mine = all[req.user.id] || {};
-  const entries = Object.entries(mine).map(([novelId, v]) => ({ novelId, ...v }));
-  entries.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
-  res.json(entries[0] || null);
+  const result = await query(
+    `SELECT * FROM progress WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 1`,
+    [req.user.id]
+  );
+  if (!result.rows[0]) {
+    return res.json(null);
+  }
+  const row = result.rows[0];
+  const progress ={
+    chapterId: row.chapter_id,
+    chapterTitle: row.chapter_title,
+    chapterUrl: row.chapter_url,
+    novelTitle: row.novel_title,
+    percent: row.percent,
+    updatedAt: row.updated_at,
+    novelId: row.novel_id,
+  }
+  res.json(progress); 
 });
 
-await migrateLegacyDataIfNeeded();
 await ensureDataFiles();
 app.listen(PORT, () => {
   console.log(`LN reader running at http://localhost:${PORT}`);
